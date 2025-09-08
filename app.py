@@ -4,17 +4,34 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 import google.generativeai as genai
+import re
 
 # Load environment variables
 load_dotenv(dotenv_path='.env')
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": [
-    os.getenv('FRONTEND_ORIGIN', 'http://localhost:3000'),
+# Build allowed origins list, including local dev, https variants, env-provided origin(s), and Vercel
+frontend_origin_env = os.getenv('FRONTEND_ORIGIN')
+additional_origins_env = os.getenv('ADDITIONAL_ORIGINS', '')  # comma-separated
+additional_origins = [o.strip() for o in additional_origins_env.split(',') if o.strip()]
+allowed_origins = [
+    frontend_origin_env or 'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173',
-    'http://127.0.0.1:5173'
-]}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization", "x-api-key"], expose_headers=["Content-Type"], supports_credentials=False)
+    'http://127.0.0.1:5173',
+    'https://localhost:3000',
+    'https://127.0.0.1:3000'
+] + additional_origins + [
+    re.compile(r'https://.*\.vercel\.app')
+]
+CORS(
+    app,
+    resources={r"/*": {"origins": allowed_origins}},
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "x-api-key"],
+    expose_headers=["Content-Type"],
+    supports_credentials=False,
+)
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_TOKEN")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY") or os.getenv("API_AUTH_TOKEN")
