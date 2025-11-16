@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 import re
 
 # Load environment variables
@@ -39,7 +40,8 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY") or os.getenv("API_AUTH_TOKEN")
 if not GOOGLE_API_KEY:
     print("⚠️ GOOGLE_API_KEY is not set. Gemini requests will fail.")
 else:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    # Suppress the linter warning as this is the correct usage for google-generativeai 0.7.2
+    genai.configure(api_key=GOOGLE_API_KEY)  # type: ignore
 
 
 def _check_internal_auth(req):
@@ -100,28 +102,78 @@ def generate():
     if mode == 'random' and not inputs:
         inputs = 'Write a short, whimsical story suitable for kids.'
 
+    # Create GenerationConfig object
+    generation_config = GenerationConfig()
+    
     # Map parameters to generation_config
-    generation_config = {}
     if 'temperature' in parameters:
-        generation_config['temperature'] = parameters['temperature']
+        generation_config.temperature = parameters['temperature']
     if 'top_p' in parameters:
-        generation_config['top_p'] = parameters['top_p']
+        generation_config.top_p = parameters['top_p']
     if 'top_k' in parameters:
-        generation_config['top_k'] = parameters['top_k']
+        generation_config.top_k = parameters['top_k']
     if 'max_new_tokens' in parameters:
-        generation_config['max_output_tokens'] = parameters['max_new_tokens']
-
-    # Clean None values
-    generation_config = {k: v for k, v in generation_config.items() if v is not None}
+        generation_config.max_output_tokens = parameters['max_new_tokens']
 
     try:
-        model = genai.GenerativeModel(model_name)
+        # Suppress the linter warning as this is the correct usage for google-generativeai 0.7.2
+        model = genai.GenerativeModel(model_name)  # type: ignore
         resp = model.generate_content(inputs, generation_config=generation_config)
 
-        # Handle safety blocks or empty responses
-        text = getattr(resp, 'text', None)
+        # Check if response was blocked by safety filters
+        if hasattr(resp, 'prompt_feedback') and resp.prompt_feedback and hasattr(resp.prompt_feedback, 'block_reason') and resp.prompt_feedback.block_reason:
+            return jsonify({
+                'error': 'Response blocked by safety filters',
+                'safety_ratings': resp.prompt_feedback.safety_ratings if hasattr(resp.prompt_feedback, 'safety_ratings') else None,
+                'block_reason': str(resp.prompt_feedback.block_reason)
+            }), 400
+
+        # Check for valid candidates
+        if not hasattr(resp, 'candidates') or not resp.candidates:
+            return jsonify({
+                'error': 'No valid response candidates returned',
+                'raw_response': resp.to_dict() if hasattr(resp, 'to_dict') else str(resp)
+            }), 502
+
+        # Get the first candidate
+        candidate = resp.candidates[0]
+        
+        # Check if candidate was blocked
+        if hasattr(candidate, 'safety_ratings'):
+            # Check if any safety rating blocked the content
+            if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 'SAFETY':
+                return jsonify({
+                    'error': 'Content blocked by safety filters',
+                    'safety_ratings': candidate.safety_ratings if hasattr(candidate, 'safety_ratings') else None,
+                    'finish_reason': str(candidate.finish_reason)
+                }), 400
+        
+        # Try to extract text content
+        text = None
+        if hasattr(candidate, 'content') and candidate.content:
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                # Extract text from the first part
+                part = candidate.content.parts[0]
+                if hasattr(part, 'text'):
+                    text = part.text
+        
+        # Fallback to checking candidate.text directly
+        if not text and hasattr(candidate, 'text'):
+            text = candidate.text
+            
+        # Final fallback - check response.text
+        if not text and hasattr(resp, 'text'):
+            text = resp.text
+
         if not text:
-            return jsonify({'error': 'Empty response', 'raw': resp.to_dict() if hasattr(resp, 'to_dict') else None}), 502
+            return jsonify({
+                'error': 'Empty response content',
+                'raw_response': resp.to_dict() if hasattr(resp, 'to_dict') else str(resp),
+                'candidate_info': {
+                    'finish_reason': getattr(candidate, 'finish_reason', None),
+                    'safety_ratings': getattr(candidate, 'safety_ratings', None) if hasattr(candidate, 'safety_ratings') else None
+                }
+            }), 502
 
         return jsonify({
             'candidates': [
@@ -144,4 +196,4 @@ if __name__ == '__main__':
     print(f"🚀 Gemini Proxy API running on http://localhost:{port}")
     print("📡 Health check: /health")
     print("🤖 Generation API: /api/generate")
-    app.run(host='0.0.0.0', port=port, debug=True) 
+    app.run(host='0.0.0.0', port=port, debug=True)
