@@ -72,7 +72,7 @@ def health():
         'service': 'Gemini Proxy API (Flask)',
         'llm_integration': 'Google Generative AI',
         'api_key_status': 'configured' if GOOGLE_API_KEY else 'not configured',
-        'model': 'gemini-1.5-flash-latest'
+        'model': 'gemini-2.5-flash'
     })
 
 
@@ -91,7 +91,7 @@ def generate():
     data = request.get_json(silent=True) or {}
     mode = (data.get('mode') or 'prompt').strip()
     inputs = (data.get('inputs') or '').strip()
-    model_name = data.get('model') or 'gemini-1.5-flash-latest'
+    model_name = data.get('model') or 'gemini-2.5-flash'
     parameters = data.get('parameters') or {}
 
     if mode != 'random' and not inputs:
